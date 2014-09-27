@@ -1,44 +1,15 @@
-include ../includes.mk
 
-BUILD_DIR := image
-DOCKER_IMAGE := deis/publisher
-RELEASE_IMAGE := $(DOCKER_IMAGE):$(BUILD_TAG)
-REMOTE_IMAGE := $(REGISTRY)/$(RELEASE_IMAGE)
+build:
+	rm -f package/*
+	docker build -t deis/build-publisher .
+	mkdir -p package
+	docker cp `docker run -d deis/build-publisher`:/tmp/publisher.tar.gz package/
+	
+image:	
+	# https://medium.com/@kelseyhightower/optimizing-docker-images-for-static-binaries-b5696e26eb07
+	cd publish && tar zxpvf ../package/publisher.tar.gz && docker build -t deis/publisher .	
+	rm -f publish/publisher*
 
-build: check-docker
-  docker build -t $(RELEASE_IMAGE) .
+all: build image
 
-clean: check-docker check-registry
-  docker rmi $(RELEASE_IMAGE) $(REMOTE_IMAGE)
-
-full-clean: check-docker check-registry
-  docker images -q $(DOCKER_IMAGE) | xargs docker rmi -f
-  docker images -q $(REGISTRY)/$(DOCKER_IMAGE) | xargs docker rmi -f
-
-install: check-deisctl
-  deisctl scale publisher=1
-
-push: check-docker check-registry check-deisctl
-  docker tag $(RELEASE_IMAGE) $(REMOTE_IMAGE)
-  docker push $(REMOTE_IMAGE)
-  deisctl config publisher set image=$(REMOTE_IMAGE)
-
-release: image
-  docker tag $(DOCKER_IMAGE) $(RELEASE_IMAGE)
-  docker push $(RELEASE_IMAGE)
-
-restart: stop start
-
-run: install start
-
-start: check-deisctl
-  deisctl start publisher
-
-stop: check-deisctl
-  deisctl stop publisher
-
-test:
-  @echo no unit tests
-
-uninstall: check-deisctl
-  deisctl scale publisher=0
+.PHONY: all

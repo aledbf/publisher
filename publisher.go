@@ -28,14 +28,14 @@ func main() {
     log.Fatal(err)
   }
 
-  go listenContainers(client)
+  var containerMapping = make(map[string]string)
+  go listenContainers(client, containerMapping)
+  go pollContainers(client, containerMapping)
 
-  go pollContainers(client)
+  select{}
 }
 
-func listenContainers(client *docker.Client) {
-  var appName = regexp.MustCompile("from (*):v*")
-
+func listenContainers(client *docker.Client, containerMapping map[string]string) {
   listener := make(chan *docker.APIEvents)
   defer func() { time.Sleep(10 * time.Millisecond); client.RemoveEventListener(listener) }()
   err := client.AddEventListener(listener)
@@ -50,13 +50,12 @@ func listenContainers(client *docker.Client) {
         if err != nil {
           log.Fatal(err)
         }
-        publishContainer(container)
-      } else if event.Status == "stop" {
-        filteredAppName := re.FindStringSubmatch(event.From)
-        if len(filteredAppName) != 0 {
-          log.Println("unpublishing service",filteredAppName[1])
-          keyPath := "/deis/services/" + filteredAppName[1]
+        publishContainer(container, containerMapping)
+      } else if event.Status == "stop" || event.Status == "destroy" {
+        keyPath, ok := containerMapping[event.ID]
+        if(ok){
           unsetEtcd(etcd.NewClient([]string{"http://" + os.Getenv("ETCD_HOST") + ":4001"}), keyPath)
+          delete(containerMapping, event.ID)
         }
       }
     }
@@ -78,7 +77,7 @@ func getContainer(client *docker.Client, id string) (*docker.APIContainers, erro
   return nil, errors.New("could not find container")
 }
 
-func pollContainers(client *docker.Client) {
+func pollContainers(client *docker.Client, containerMapping map[string]string) {
   containers, err := client.ListContainers(docker.ListContainersOptions{})
   if err != nil {
     log.Fatal(err)
@@ -86,11 +85,11 @@ func pollContainers(client *docker.Client) {
 
   for _, container := range containers {
     // send container to channel for processing
-    publishContainer(&container)
+    publishContainer(&container, containerMapping)
   }
 }
 
-func publishContainer(container *docker.APIContainers) {
+func publishContainer(container *docker.APIContainers, containerMapping map[string]string) {
   client := etcd.NewClient([]string{"http://" + os.Getenv("ETCD_HOST") + ":4001"})
 
   var publishableContainerName = regexp.MustCompile(`[a-z0-9-]+_v[1-9][0-9]*.(cmd|web).[1-9][0-9]*`)
@@ -106,6 +105,7 @@ func publishContainer(container *docker.APIContainers) {
     }
     containerBaseName := publishableContainerBaseName.FindString(containerName)
     keyPath := "/deis/services/" + containerBaseName + "/" + containerName
+    containerMapping[container.ID] = keyPath
     for _, p := range container.Ports {
       host := os.Getenv("HOST")
       port := strconv.Itoa(int(p.PublicPort))
@@ -117,7 +117,7 @@ func publishContainer(container *docker.APIContainers) {
 }
 
 func setEtcd(client *etcd.Client, key, value string) {
-  _, err := client.Set(key, value)
+  _, err := client.Set(key, value, 0)
   if err != nil {
     log.Println(err)
   }

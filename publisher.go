@@ -28,14 +28,22 @@ func main() {
     log.Fatal(err)
   }
 
-  var containerMapping = make(map[string]string)
-  go listenContainers(client, containerMapping)
-  go pollContainers(client, containerMapping)
+  etcdClient := etcd.NewClient([]string{"http://" + os.Getenv("ETCD_HOST") + ":4001"})
+  // default consistency level is STRONG. Avoid reads from leader.
+  etcdClient.SetConsistency("WEAK_CONSISTENCY")
 
-  select{}
+  timeout := 30 * time.Second
+  ttl := 60 * time.Second
+
+  go listenContainers(client, etcdClient, ttl)
+
+  for {
+    go pollContainers(client, etcdClient, timeout, ttl)
+    time.Sleep(timeout)
+  }
 }
 
-func listenContainers(client *docker.Client, containerMapping map[string]string) {
+func listenContainers(client *docker.Client, etcd *etcd.Client, ttl time.Duration) {
   listener := make(chan *docker.APIEvents)
   defer func() { time.Sleep(10 * time.Millisecond); client.RemoveEventListener(listener) }()
   err := client.AddEventListener(listener)
@@ -50,13 +58,7 @@ func listenContainers(client *docker.Client, containerMapping map[string]string)
         if err != nil {
           log.Fatal(err)
         }
-        publishContainer(container, containerMapping)
-      } else if event.Status == "stop" || event.Status == "destroy" {
-        keyPath, ok := containerMapping[event.ID]
-        if(ok){
-          unsetEtcd(etcd.NewClient([]string{"http://" + os.Getenv("ETCD_HOST") + ":4001"}), keyPath)
-          delete(containerMapping, event.ID)
-        }
+        publishContainer(container, etcd, ttl)
       }
     }
   }
@@ -77,7 +79,7 @@ func getContainer(client *docker.Client, id string) (*docker.APIContainers, erro
   return nil, errors.New("could not find container")
 }
 
-func pollContainers(client *docker.Client, containerMapping map[string]string) {
+func pollContainers(client *docker.Client, etcd *etcd.Client, timeout time.Duration, ttl time.Duration) {
   containers, err := client.ListContainers(docker.ListContainersOptions{})
   if err != nil {
     log.Fatal(err)
@@ -85,13 +87,11 @@ func pollContainers(client *docker.Client, containerMapping map[string]string) {
 
   for _, container := range containers {
     // send container to channel for processing
-    publishContainer(&container, containerMapping)
+    publishContainer(&container, etcd, ttl)
   }
 }
 
-func publishContainer(container *docker.APIContainers, containerMapping map[string]string) {
-  client := etcd.NewClient([]string{"http://" + os.Getenv("ETCD_HOST") + ":4001"})
-
+func publishContainer(container *docker.APIContainers, client *etcd.Client, ttl time.Duration) {  
   var publishableContainerName = regexp.MustCompile(`[a-z0-9-]+_v[1-9][0-9]*.(cmd|web).[1-9][0-9]*`)
   var publishableContainerBaseName = regexp.MustCompile(`^[a-z0-9-]+`)
 
@@ -105,23 +105,22 @@ func publishContainer(container *docker.APIContainers, containerMapping map[stri
     }
     containerBaseName := publishableContainerBaseName.FindString(containerName)
     keyPath := "/deis/services/" + containerBaseName + "/" + containerName
-    containerMapping[container.ID] = keyPath
     for _, p := range container.Ports {
       host := os.Getenv("HOST")
       port := strconv.Itoa(int(p.PublicPort))
-      setEtcd(client, keyPath, host+":"+port)
+      setEtcd(client, keyPath, host+":"+port, uint64(ttl.Seconds()))
       // TODO: support multiple exposed ports
       break
     }
   }
 }
 
-func setEtcd(client *etcd.Client, key, value string) {
-  _, err := client.Set(key, value, 0)
+func setEtcd(client *etcd.Client, key, value string, ttl uint64) {
+  _, err := client.Set(key, value, ttl)
   if err != nil {
     log.Println(err)
   }
-  log.Println("set", key, "->", value)
+  log.Println("[deis-publisher] update app", key, "->", value)
 }
 
 func unsetEtcd(client *etcd.Client, key string) {
@@ -129,5 +128,5 @@ func unsetEtcd(client *etcd.Client, key string) {
   if err != nil {
     log.Println(err)
   }
-  log.Println("unset", key)
+  log.Println("[deis-publisher] remove app", key)
 }

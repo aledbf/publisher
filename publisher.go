@@ -32,8 +32,8 @@ func main() {
   // default consistency level is STRONG. Avoid reads from leader.
   etcdClient.SetConsistency("WEAK_CONSISTENCY")
 
-  timeout := 30 * time.Second
-  ttl := 60 * time.Second
+  timeout := 300 * time.Second
+  ttl := 600 * time.Second
 
   go listenContainers(client, etcdClient, ttl)
 
@@ -108,19 +108,19 @@ func publishContainer(container *docker.APIContainers, client *etcd.Client, ttl 
     for _, p := range container.Ports {
       host := os.Getenv("HOST")
       port := strconv.Itoa(int(p.PublicPort))
-      setEtcd(client, keyPath, host+":"+port, uint64(ttl.Seconds()))
+      setEtcd(client, containerName, keyPath, host+":"+port, uint64(ttl.Seconds()))
       // TODO: support multiple exposed ports
       break
     }
   }
 }
 
-func setEtcd(client *etcd.Client, key, value string, ttl uint64) {
+func setEtcd(client *etcd.Client, appName, key, value string, ttl uint64) {
   _, err := client.Set(key, value, ttl)
   if err != nil {
     log.Println(err)
   }
-  log.Println("[deis-publisher] update app", key, "->", value)
+  log.Println("[deis-publisher] mapping app", appName, "->", value)
 }
 
 func unsetEtcd(client *etcd.Client, key string) {
@@ -128,5 +128,5 @@ func unsetEtcd(client *etcd.Client, key string) {
   if err != nil {
     log.Println(err)
   }
-  log.Println("[deis-publisher] remove app", key)
+  log.Println("[deis-publisher] removing app", key)
 }

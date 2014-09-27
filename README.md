@@ -19,7 +19,7 @@ If you want to install this container on your CoreOS hosts, use the supplied sys
 
 ## Building from Source
 
-To build the image, run `make image`.
+To build the image, run `make all`.
 
 The build/runtime environment is split into two parts:
 

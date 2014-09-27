@@ -34,7 +34,7 @@ func main() {
 }
 
 func listenContainers(client *docker.Client) {
-  var appName := regexp.MustCompile("from (*):v*")
+  var appName = regexp.MustCompile("from (*):v*")
 
   listener := make(chan *docker.APIEvents)
   defer func() { time.Sleep(10 * time.Millisecond); client.RemoveEventListener(listener) }()
@@ -52,14 +52,13 @@ func listenContainers(client *docker.Client) {
         }
         publishContainer(container)
       } else if event.Status == "stop" {
-        if !appName.MatchString(event.From) {
-          continue
-        }     
-
-        filteredAppName := appName.FindString(event.From)
-        log.Println("unpublishing service",filteredAppName)
-        keyPath := "/deis/services/" + filteredAppName
-        unsetEtcd(etcd.NewClient([]string{"http://" + os.Getenv("ETCD_HOST") + ":4001"}), keyPath)        
+        filteredAppName := re.FindStringSubmatch(event.From)
+        if len(filteredAppName) != 0 {
+          log.Println("unpublishing service",filteredAppName[1])
+          keyPath := "/deis/services/" + filteredAppName[1]
+          unsetEtcd(etcd.NewClient([]string{"http://" + os.Getenv("ETCD_HOST") + ":4001"}), keyPath)
+        }
+      }
     }
   }
 }

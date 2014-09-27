@@ -120,7 +120,7 @@ func setEtcd(client *etcd.Client, appName, key, value string, ttl uint64) {
   if err != nil {
     log.Println(err)
   }
-  log.Println("[deis-publisher] mapping app", appName, "->", value)
+  log.Printf("[deis-publisher] mapping app %60s -> %s\n", appName, value)
 }
 
 func unsetEtcd(client *etcd.Client, key string) {
@@ -128,5 +128,5 @@ func unsetEtcd(client *etcd.Client, key string) {
   if err != nil {
     log.Println(err)
   }
-  log.Println("[deis-publisher] removing app", key)
+  log.Printf("[deis-publisher] removing app %s\n", key)
 }
